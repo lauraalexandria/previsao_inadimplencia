@@ -1,0 +1,400 @@
+---
+title: "Modelo de Previsão de Inadimplência"
+output: 
+  html_document:
+    code_folding: "show"
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+---
+
+```{css, echo=FALSE}
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Raleway:ital,wght@1,600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Open+Sans&display=swap');
+
+
+body {
+  text-align: justify;
+  font-family: 'Open Sans', sans-serif;
+}
+
+.title {
+  color: #517A85;
+  font-size: 10px; 
+  font-family: 'Montserrat', sans-serif;
+  text-align: right;
+  position: fixed;
+  top: 5%;
+  right: 74%;
+  width: 300px;
+}
+
+.date {
+  color: #dedede;
+  font-size: 20px;
+  font-family: 'Raleway', sans-serif;
+  text-align: right;
+  position: fixed;
+  top: 27%;
+  right: 74%;
+  width: 250px;
+}
+
+#TOC {
+  color: #2EB1AB; /*Cor das letras na TOC*/
+  font-family: 'Poppins', sans-serif;
+  border-radius: 0px;
+  top: 30%; /*só para abaixar e por o título manualmente*/
+  }  
+  
+.tocify {
+  border: none;
+}
+  
+.list-group-item.active, .list-group-item.active:focus, .list-group-item.active:hover {
+    background-color: #2EB1AB /*Cor do background da TOC quando selecionada*/
+}  
+
+div.meunome {
+ text-align: justify;
+ position: fixed;
+ top: 88%;
+ right: 77%;
+}
+ 
+.section h1 {
+  color: #2EB1AB;
+	font-family: 'Montserrat', sans-serif;
+	border-bottom: 1px solid #dedede
+}
+  
+.section h2 {
+  color: #FF7677;
+  font-family: 'Poppins', sans-serif;  
+}
+  
+b, strong {
+  color: #45BEC6;
+}
+
+mark {
+  background-color: #FFBBA4;
+}
+
+a {
+  color: #778bd9;
+}
+
+div.bloco {
+  text-align: justify;
+  padding: 1em;
+  background: #f5eeeb;
+  color: black;
+  border: 5px solid white;
+  border-radius: 10px;
+}
+
+div.metade {
+  width: 50%;
+  float: left;
+  text-align: justify;
+  padding: 1em;
+  background: #f5eeeb;
+  color: black;
+  border: 5px solid white;
+  border-radius: 10px;
+}
+
+ul.redes {
+  position: fixed;
+  top: 92%;
+  right: 82%;
+}
+
+ul.redes li{
+  list-style: none;
+  float: left;
+  size: 30px;
+  margin-right: 7px;
+}
+
+ul.redes a{
+  color: #dedede;
+  size: 30px;
+}
+
+ul.redes a:hover{
+  color: #517A85;
+  text-decoration: none;
+}
+
+```
+
+```{r include=FALSE, message = F, warning = F}
+gotop::use_gotop(color = "#517A85")
+```
+
+
+# Problema
+
+Modelos de score de crédito calculam a probabilidade de inadimplência e são uma das  principais ferramentas utilizadas por diversas empresas para aprovar ou negar um crédito. O objetivo deste desafio é criar um modelo preditivo calculando a probabilidade de inadimplência de cada novo pedido de crédito.
+
+A variável resposta é a coluna inadimplente, que indica se o tomador veio a se tornar inadimplente(1) ou não(0). As variáveis da base de dados são descritas abaixo:
+
+- __idade:__ A idade do cliente. \
+- __numero_de_dependentes:__ O número de pessoas dependentes do cliente. \
+- __salario_mensal:__ Salário mensal do cliente. \
+- __numero_emprestimos_imobiliarios:__ Quantidade de empréstimos imobiliários que o cliente possui em aberto. \
+- __numero_vezes_passou_90_dias:__ Número de vezes que o tomador passou mais
+de 90 dias em atraso. \
+- __util_linhas_inseguras:__ Quanto que o cliente está usando, relativamente ao limite dele, de linhas de crédito que não são seguradas por qualquer bem do tomador e.g: imoveis, carros etc. \
+- __vezes_passou_de_30_59_dias:__ Número de vezes que o cliente atrasou, entre 30 e 59 dias, o pagamento de um empréstimo. \
+- __razao_debito:__ Razão entre as dívidas e o patrimônio do tomador. razão débito = Dividas/Patrimônio \
+- __numero_linhas_crdto_aberto:__ Número de empréstimos em aberto pelo cliente. \
+- __numero_de_vezes_que_passou_60_89_dias:__ Número de vezes que o cliente
+atrasou, entre 60 e 89 dias, o pagamento de um empréstimo.
+
+Utilize este modelo para gerar as previsões na base teste.csv, inserindo uma nova coluna na tabela de dados do arquivo teste.csv que contenha as previsões e nomeie esta coluna com o nome "inadimplente".
+
+```{r message = F, warning = F}
+library(tidyverse)
+library(tidymodels)
+library(modelsummary)
+library(GGally)
+library(knitr)
+library(kableExtra)
+library(vip)
+select <- dplyr::select
+
+treino <- read.csv("treino.csv") %>% mutate(inadimplente = as.factor(inadimplente))
+teste <- read.csv("teste.csv")
+
+theme_set(theme_minimal())
+
+treino %>% head() %>% 
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  scroll_box(width = "800px")
+```
+
+# Análise Descritiva
+
+Ao avaliar a frequência das classes da variável resposta nota-se que se trata de um caso bastante **desbalanceado**, dessa forma, é interessante a aplicação de algumas técnicas para reverter essa situação.
+
+```{r align = "center"}
+treino %>% 
+  mutate(inadimplente = as.factor(inadimplente)) %>% 
+  group_by(inadimplente) %>%
+  count() %>% ungroup() %>% 
+  mutate(prop = round(n/sum(n), 3)) %>% 
+  ggplot(aes(inadimplente, prop, fill = inadimplente)) + 
+  geom_col(show.legend = F) + 
+  geom_text(aes(label = prop), stat = "identity", nudge_y = 0.05) +
+  labs(x = "Inadimplência", y = "Proporção")
+```
+
+A tabela a seguir possui informações sobre as covariáveis do banco de dados, e a partir dela é possível constatar algumas ideias:
+
+- A variável Salário tem uma proporção significativa de valores nulos, então uma forma de imputação desses valores será necessário; \
+- Nenhuma variável possui desvio padrão igual a zero, logo, nenhuma variável será excluída do modelo por esse motivo; \
+- A maioria das variáveis possui distribuição assimétrica;
+
+```{r}
+datasummary_skim(treino)
+```
+
+Para conferir possíveis correlações entre as covariáveis, a matriz de correlações será utilizada. A **correlação de Spearman** foi escolhida devido a assimetria apresentada pelos dados. Após analisar a matriz, a variável numero_emprestimos_imobiliarios possui as maiores correlações, com as variáveis numero_linhas_crdto_aberto, salario_mensal e razao_debito.  
+
+```{r}
+ggcorr(treino %>% select(-1), method = c("pairwise", "spearman"),
+       label = T, hjust = 1, layout.exp = 6)
+```
+
+Agora, é possível conferir as medidas de tendência central para todas as variáveis numéricas de acordo com as classes da variável resposta, e assim verificar quais covariáveis receberam maior impacto com a variação entre as classes. Em decorrência da assimetria das variáveis, a média pode ser muito influenciada pelos valores extremos e por isso a mediana será considerada. As variáveis que tiveram maior variação entre as classes foram idade e salario_mensal. Também é comum que as variáveis apresentam desvio padrão maior para as pessoas inadimplentes, talvez por ter menos observações.
+
+```{r}
+variaveis <- treino %>% select(-1) %>% names()
+paste_var <- variaveis %>% paste(collapse = " + ")
+formula <- as.formula(paste("(", paste_var, ") ~  inadimplente * ((`Média` = Mean) + (Mediana = Median) +(Des.Pad. = SD))"))
+
+datasummary(formula, data = treino) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+# Ajuste do Modelo
+
+Para ajustar o modelo, foi realizada a divisão do banco de dados, respeitando a proporção de inadimplentes. Dado o volume de dados, optou-se por utilizar uma proporção igual a 90%, de forma que a fração de teste possui 11000 observações, quantidade suficiente para testar e permitindo que o ajuste utilize o máximo de informações. Como o modelo escolhido, Random Forest, possui hiperparâmetros para serem tunados, também será realizada a validação cruzada, com divisão de 5 folds.
+
+```{r}
+set.seed(123)
+
+treino_split <- initial_split(treino, strata = inadimplente, prop = 0.9)
+treino_train <- training(treino_split)
+treino_test <- testing(treino_split)
+
+treino_folds <- vfold_cv(treino_train, strata = inadimplente , 5)
+```
+
+Os hiperparâmetros que serão tunados são: o número de preditores em cada árvore e o número mínimo de observações que cada nó para prosseguir com a classificação, os valores testados podem ser observados com o objeto ```grid```. Para o ajuste do modelo, alguns passos foram adicionados a partir do que foi observado com a análise descritiva: a imputação de valores para as variáveis que possuem valores nulos e a retirada de variáveis que indicam combinação linear. E ao acionar o workflow para o ajuste do modelo e tunagem, optou-se por priorizar a detecção de pessoas inadimplentes. 
+
+```{r eval = F, echo = T}
+mod <- rand_forest(mtry = tune(), # Número de preditores nas árvores;
+                   trees = 1000,  # Número de árvores
+                   min_n = tune()) %>%  # Número mínimo para prosseguir a árvore;
+  set_engine("ranger", importance = "permutation") %>%
+  set_mode("classification")
+
+recipe <- recipe(inadimplente ~ . , data = treino_train) %>%
+  step_impute_median(all_predictors()) %>% # Imputar valores faltantes;
+  step_lincomb(all_predictors()) # Retira variáveis que são comb. lineares;
+
+workflow <- workflow() %>%
+  add_recipe(recipe) %>%
+  add_model(mod)
+
+grid <- expand.grid(mtry = c(3, 5, 7),
+                    min_n =  c(30, 40, 50))
+
+
+tune_rf <- tune_grid(workflow,
+                     resamples = treino_folds,
+                     grid = grid,
+                     metrics = metric_set(specificity), # Foco em acertar casos fraudulentos;
+                     control = control_grid(verbose = T))
+
+show_best(tune_rf) %>% 
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) 
+```
+
+
+```{r echo=FALSE}
+tune_rf <- readRDS("tune_rf3.rds")
+show_best(tune_rf) %>% 
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) 
+```
+
+# Resultados
+
+Após o ajuste do modelo, é possível avaliar os resultados para o banco de teste e conferir a capacidade de generalização do modelo com novos dados. A princípio, a acurácia retornou um valor alto, porém deve ser resultado do grande desbalanceamento encontrado entre as classes.
+
+```{r eval = F, echo = T}
+workflow <-  finalize_workflow(workflow, select_best(tune_rf))
+
+aplicacao_teste <- last_fit(workflow, treino_split)
+aplicacao_teste %>% collect_metrics() %>% 
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) 
+```
+
+```{r echo = FALSE}
+aplicacao_teste <- readRDS("last_fit.rds")
+aplicacao_teste %>% collect_metrics() %>% 
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) 
+```
+
+Aprofundando mais nos resultados, as matrizes de confusão a seguir indicam o percentual de acerto de acordo com as classes verdadeiras e apenas 16% dos inadimplentes foram detectados corretamente.
+
+```{r}
+conf_mat_resampled(aplicacao_teste) %>% 
+  group_by(Truth) %>% 
+  mutate(Freq = round(Freq/sum(Freq),2)) %>% 
+  ggplot(aes(x = Prediction, y = Truth, fill = Freq)) +
+  geom_tile(color = "white") + 
+  geom_text(aes(label = Freq)) +
+  scale_fill_gradient2(low = "#ffffff", high = "#0c6964")
+```
+
+Em busca de reverter o resultado acima, o ponto de corte para classificar como inadimplente ou não foi alterado para a proporção inicial dos dados, com o intuito de aumentar o número de classificações com inadimplência. Nesse caso, 3/4 dos inadimplentes foram detectados, com o custo de uma parcela dos não-inadimplentes terem sido erroneamente classificados.
+
+```{r}
+aplicacao_teste %>% collect_predictions() %>% 
+  mutate(pred = ifelse(`.pred_1` >= 0.067, "1", "0")) %>% 
+  group_by(inadimplente, pred) %>% 
+  count() %>% group_by(inadimplente) %>% 
+  mutate(prop = round(n/sum(n),2)) %>% 
+  ggplot(aes(x = pred, y = inadimplente, fill = prop)) +
+  geom_tile(color = "white") + 
+  geom_text(aes(label = prop)) +
+  scale_fill_gradient2(low = "#ffffff", high = "#0c6964")
+```
+
+Diminuindo mais o ponto de corte, quase todos os inadimplentes são detectados, porém mais da metade dos não-inadimplentes também é classificado, sendo a classe mais frequente, ao final os realmente inadimplentes seriam minoria entre os classificados, de forma que também não seria uma boa escolha.
+
+```{r}
+aplicacao_teste %>% collect_predictions() %>% 
+  mutate(pred = ifelse(`.pred_1` >= 0.01, "1", "0")) %>% 
+  group_by(inadimplente, pred) %>% 
+  count() %>% group_by(inadimplente) %>% 
+  mutate(prop = round(n/sum(n),2)) %>% 
+  ggplot(aes(x = pred, y = inadimplente, fill = prop)) +
+  geom_tile(color = "white") + 
+  geom_text(aes(label = prop)) +
+  scale_fill_gradient2(low = "#ffffff", high = "#0c6964")
+```
+
+Também é possível avaliar o modelo ajustado conferindo a importância das variáveis. Nesse caso não foi muito coincidente com o esperado pela análise descritiva, em que as variáveis que pareciam sofrer maior impacto eram o salário e a idade.
+
+```{r}
+aplicacao_teste %>%
+  pluck(".workflow", 1) %>%
+  pull_workflow_fit()  %>%
+  vip(num_features = 20, aesthetics = list(fill = "#45BEC6"))
+```
+
+
+# Novos dados
+
+Agora, é possível finalizar o projeto e realizar a predição para o conjunto de dados final de teste e também conferir se a proporção das classificações segue um padrão razoável.
+
+```{r eval = F, echo = T}
+modelo_final <- workflow %>% fit(treino)
+prob_predict <- predict(modelo_final, new_data = teste, type = "prob")$.pred_1
+
+teste <- teste %>% 
+  mutate(inadimplente = ifelse(prob_predict >= 0.067, "1", "0"))
+
+teste %>% 
+  group_by(inadimplente) %>% 
+  count() %>% ungroup() %>% 
+  mutate(prop = n /sum(n)) %>% 
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) 
+```
+
+```{r echo = FALSE}
+modelo_final <- readRDS("modelo_final.rds")
+prob_predict <- predict(modelo_final, new_data = teste, type = "prob")$.pred_1
+
+teste <- teste %>% 
+  mutate(inadimplente = ifelse(prob_predict >= 0.067, "1", "0"))
+
+teste %>% 
+  group_by(inadimplente) %>% 
+  count() %>% ungroup() %>% 
+  mutate(prop = n /sum(n)) %>% 
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) 
+```
+
+```{r eval = F, echo = T}
+write.csv2(teste, "teste_predict.csv")
+```
+
+
+<div class = "meunome">
+by Laura Alexandria de Oliveira
+
+<ul class="redes">
+
+<li><a class="fas fa-user" href = "https://lauraalexandria.github.io/"></a></li>
+<li><a class="fab fa-github" href = "https://github.com/lauraalexandria"></a></li>
+<li><a class="fab fa-linkedin" href = "https://www.linkedin.com/in/laura-alexandria-de-oliveira/"></a></li>
+
+</ul>
+</div>
